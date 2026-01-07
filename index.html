@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Birthday Surprise - Precision Combined Edition</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.9.1/gsap.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+    <style>
+        body { margin: 0; background-color: #000; overflow: hidden; font-family: 'PingFang SC', sans-serif; }
+        #start-screen { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: radial-gradient(circle at center, #0a192f 0%, #000 100%); z-index: 1000; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+        .gift-container { width: 180px; height: 180px; position: relative; animation: float 4s ease-in-out infinite; }
+        .box-body { width: 140px; height: 120px; position: absolute; bottom: 0; left: 20px; background: linear-gradient(135deg, #1e3799 0%, #0c2461 100%); border-radius: 8px; z-index: 2; }
+        .box-lid { width: 160px; height: 30px; position: absolute; top: 40px; left: 10px; background: #233fb1; border-radius: 4px; z-index: 4; }
+        .ribbon-v { position: absolute; width: 30px; height: 100%; left: 50%; transform: translateX(-50%); background: linear-gradient(to right, #d4af37, #fde48e, #d4af37); z-index: 3; }
+        .bow-svg { position: absolute; top: -10px; left: 50%; transform: translateX(-50%); width: 120px; height: 70px; z-index: 5; }
+        #start-btn { margin-top: 60px; padding: 18px 60px; font-size: 20px; font-weight: bold; color: #4a3c00; background: linear-gradient(45deg, #d4af37, #fde48e, #d4af37); border: none; cursor: pointer; border-radius: 4px; z-index: 1001; }
+        @keyframes float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-20px); } }
+        #video-input { visibility: hidden; position: absolute; width: 1px; height: 1px; }
+        #finale-text { position: fixed; top: 25%; width: 100%; text-align: center; color: #fff; font-size: clamp(40px, 8vw, 80px); font-weight: 200; letter-spacing: 15px; text-shadow: 0 0 20px #d4af37; display: none; z-index: 100; pointer-events: none; }
+    </style>
+</head>
+<body>
+    <div id="start-screen">
+        <canvas id="snow-canvas" style="position:absolute; top:0; left:0; pointer-events:none;"></canvas>
+        <div class="gift-container">
+            <svg class="bow-svg" viewBox="0 0 120 70">
+                <path d="M60 35 C 40 35, 10 10, 15 45 C 20 65, 60 40, 60 35" fill="#d4af37" />
+                <path d="M60 35 C 80 35, 110 10, 105 45 C 100 65, 60 40, 60 35" fill="#d4af37" />
+                <rect x="52" y="30" width="16" height="12" rx="2" fill="#ffd700" />
+            </svg>
+            <div class="box-lid"><div class="ribbon-v"></div></div>
+            <div class="box-body"><div class="ribbon-v"></div></div>
+        </div>
+        <button id="start-btn">MAKE A WISH</button>
+    </div>
+    <div id="finale-text">HAPPY BIRTHDAY</div>
+    <video id="video-input"></video>
+
+<script>
+    let scene, camera, renderer, instMainBalls, candleGroup, waveLine, flamePoints;
+    let photos = [], confettiParticles = [], fireworks = [];
+    let currentMode = 'CAKE', isFinale = false, lastActionTime = 0;
+    
+    // 保持 15000 粒子的高密度
+    const MAIN_COUNT = 15000; 
+    const FLAME_COUNT = 2500;
+    const cakePosArr = [], starPosArr = [], flameBasePos = [];
+
+    // --- 金色雪花逻辑 ---
+    const snowCanvas = document.getElementById('snow-canvas');
+    const sCtx = snowCanvas.getContext('2d');
+    let snowArray = [];
+    function resize() { snowCanvas.width = window.innerWidth; snowCanvas.height = window.innerHeight; }
+    window.addEventListener('resize', resize); resize();
+    class Snow { constructor(){this.reset();} reset(){this.x=Math.random()*snowCanvas.width; this.y=Math.random()*snowCanvas.height-snowCanvas.height; this.s=Math.random()*2+1; this.v=Math.random()*1+0.5; this.o=Math.random()*0.5+0.3;} update(){this.y+=this.v; if(this.y>snowCanvas.height)this.reset();} draw(){sCtx.fillStyle=`rgba(212,175,55,${this.o})`; sCtx.beginPath(); sCtx.arc(this.x,this.y,this.s,0,Math.PI*2); sCtx.fill();}}
+    for(let i=0; i<100; i++) snowArray.push(new Snow());
+    function drawSnow(){ sCtx.clearRect(0,0,snowCanvas.width,snowCanvas.height); snowArray.forEach(p=>{p.update();p.draw();}); requestAnimationFrame(drawSnow); }
+    drawSnow();
+
+    function createGlowTexture() {
+        const canvas = document.createElement('canvas'); canvas.width = 64; canvas.height = 64;
+        const ctx = canvas.getContext('2d');
+        const grad = ctx.createRadialGradient(32,32,0,32,32,32);
+        grad.addColorStop(0, 'rgba(255,255,255,1)'); grad.addColorStop(1, 'rgba(255,255,255,0)');
+        ctx.fillStyle = grad; ctx.fillRect(0,0,64,64);
+        return new THREE.CanvasTexture(canvas);
+    }
+
+    function initThree() {
+        scene = new THREE.Scene();
+        camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
+        camera.position.set(0, 8, window.innerWidth < 600 ? 20 : 14);
+        camera.lookAt(0, 3, 0);
+
+        renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        document.body.appendChild(renderer.domElement);
+
+        // --- 1. 蛋糕粒子分布 ---
+        const tiers = [
+            { r: 4.5, h: 1.6, yCenter: 0.7, color: 0x00cc66, count: 5000 }, 
+            { r: 2.8, h: 1.4, yCenter: 2.6, color: 0x002db3, count: 3500 }, 
+            { r: 1.4, h: 1.2, yCenter: 4.0, color: 0xff9900, count: 500 } // 增强顶层
+        ];
+        
+        const geo = new THREE.BufferGeometry();
+        const positions = new Float32Array(MAIN_COUNT * 3);
+        const colors = new Float32Array(MAIN_COUNT * 3);
+        const colorTool = new THREE.Color();
+        let idx = 0;
+
+        tiers.forEach(t => {
+            const yMin = t.yCenter - t.h/2;
+            for(let i=0; i<t.count; i++) {
+                if(idx >= MAIN_COUNT) break;
+                const theta = Math.random()*Math.PI*2;
+                const r = Math.pow(Math.random(), 0.5) * t.r;
+                const yPos = yMin + Math.random() * t.h;
+                const cp = new THREE.Vector3(Math.cos(theta)*r, yPos, Math.sin(theta)*r);
+                const sp = new THREE.Vector3((Math.random()-0.5)*55, (Math.random()-0.5)*40, (Math.random()-0.5)*55);
+                cakePosArr.push(cp); starPosArr.push(sp);
+                positions[idx*3]=cp.x; positions[idx*3+1]=cp.y; positions[idx*3+2]=cp.z;
+                colorTool.setHex(t.color); 
+                colors[idx*3]=colorTool.r; colors[idx*3+1]=colorTool.g; colors[idx*3+2]=colorTool.b;
+                idx++;
+            }
+        });
+
+        geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+        instMainBalls = new THREE.Points(geo, new THREE.PointsMaterial({ 
+            size: 0.22, map: createGlowTexture(), vertexColors: true, transparent: true, opacity: 0.65, blending: THREE.AdditiveBlending, depthWrite: false 
+        }));
+        scene.add(instMainBalls);
+
+        // --- 2. 粒子蜡烛 ---
+        candleGroup = new THREE.Group();
+        const CANDLE_PARTICLES = 800; 
+        const cGeo = new THREE.BufferGeometry();
+        const cPos = new Float32Array(CANDLE_PARTICLES * 3);
+        const cCol = new Float32Array(CANDLE_PARTICLES * 3);
+        for(let i = 0; i < CANDLE_PARTICLES; i++) {
+            const theta = Math.random() * Math.PI * 2;
+            const r = (Math.random() > 0.2) ? 0.12 : Math.random() * 0.12;
+            const y = Math.random() * 1.8 - 0.9;
+            cPos[i*3] = Math.cos(theta) * r;
+            cPos[i*3+1] = y;
+            cPos[i*3+2] = Math.sin(theta) * r;
+            colorTool.setHex(0xffb7c5); 
+            cCol[i*3] = colorTool.r; cCol[i*3+1] = colorTool.g; cCol[i*3+2] = colorTool.b;
+        }
+        cGeo.setAttribute('position', new THREE.BufferAttribute(cPos, 3));
+        cGeo.setAttribute('color', new THREE.BufferAttribute(cCol, 3));
+        const candleParticles = new THREE.Points(cGeo, new THREE.PointsMaterial({ 
+            size: 0.08, map: createGlowTexture(), vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, opacity: 0.8 
+        }));
+        candleParticles.position.y = 5.0;
+
+        const helixPts = [];
+        for(let i=0; i<=60; i++){
+            const hr = i/60, ang = hr*Math.PI*6;
+            helixPts.push(new THREE.Vector3(Math.cos(ang)*0.13, hr*1.8-0.9, Math.sin(ang)*0.13));
+        }
+        waveLine = new THREE.Line(new THREE.BufferGeometry().setFromPoints(helixPts), new THREE.LineBasicMaterial({ color: 0x00ffff, transparent: true, opacity: 0.6 }));
+        candleGroup.add(candleParticles, waveLine);
+        scene.add(candleGroup);
+
+        // --- 3. 抛物线火苗 ---
+        const fGeo = new THREE.BufferGeometry();
+        const fPos = new Float32Array(FLAME_COUNT * 3);
+        const fCol = new Float32Array(FLAME_COUNT * 3);
+        flameBasePos.length = 0; 
+        for(let i=0; i<FLAME_COUNT; i++) {
+            const h = Math.random(); 
+            const angle = Math.random() * Math.PI * 2;
+            const maxR = Math.sin(Math.pow(h, 0.45) * Math.PI) * 0.35; 
+            const r = Math.pow(Math.random(), 0.6) * maxR;
+            fPos[i*3] = Math.cos(angle)*r; fPos[i*3+1] = h; fPos[i*3+2] = Math.sin(angle)*r;
+            flameBasePos.push(new THREE.Vector3(fPos[i*3], fPos[i*3+1], fPos[i*3+2]));
+            const distRatio = r / (maxR + 0.001);
+            if (h < 0.4 && distRatio < 0.5) colorTool.setHex(0xbc13fe); 
+            else if (distRatio < 0.7) colorTool.setHex(0xffff00); 
+            else colorTool.setHex(0xff4500);
+            fCol[i*3]=colorTool.r; fCol[i*3+1]=colorTool.g; fCol[i*3+2]=colorTool.b;
+        }
+        fGeo.setAttribute('position', new THREE.BufferAttribute(fPos, 3));
+        fGeo.setAttribute('color', new THREE.BufferAttribute(fCol, 3));
+        flamePoints = new THREE.Points(fGeo, new THREE.PointsMaterial({ 
+            size: 0.15, map: createGlowTexture(), vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false 
+        }));
+        flamePoints.position.y = 5.8;
+        scene.add(flamePoints);
+
+        const loader = new THREE.TextureLoader();
+        for(let i=1; i<=12; i++){
+            loader.load(`images/images_${i}.jpeg`, tex => {
+                const p = new THREE.Mesh(new THREE.PlaneGeometry(4,3), new THREE.MeshBasicMaterial({map:tex, transparent:true, opacity:0, side:2}));
+                p.visible=false; scene.add(p); photos.push(p);
+            });
+        }
+        scene.add(new THREE.AmbientLight(0xffffff, 0.8));
+    }
+
+    // --- 4. 合并 index_final 的精准切换逻辑 ---
+    function switchScene(mode) {
+        if (isFinale || currentMode === mode || Date.now() - lastActionTime < 1000) return;
+        currentMode = mode; lastActionTime = Date.now();
+        const toC = (mode === 'CAROUSEL');
+
+        // 使用 back.out 过渡效果
+        gsap.to([candleGroup.scale, flamePoints.scale], { 
+            x: toC?0:1, y: toC?0:1, z: toC?0:1, 
+            duration: 0.6, ease: toC ? "power2.in" : "back.out(1.2)" 
+        });
+
+        const posAttr = instMainBalls.geometry.attributes.position;
+        for (let i = 0; i < cakePosArr.length; i++) {
+            const obj = { t: 0 };
+            gsap.to(obj, { 
+                t: 1, duration: 1.3, delay: Math.random()*0.05, 
+                ease: toC ? "power2.out" : "back.out(1.1)", // 合并精准缓冲
+                onUpdate: () => {
+                    const start = toC ? cakePosArr[i] : starPosArr[i];
+                    const end = toC ? starPosArr[i] : cakePosArr[i];
+                    const cur = new THREE.Vector3().lerpVectors(start, end, obj.t);
+                    posAttr.setXYZ(i, cur.x, cur.y, cur.z); 
+                    posAttr.needsUpdate = true;
+                }
+            });
+        }
+        photos.forEach(p => { 
+            if(toC){p.visible=true; gsap.to(p.material,{opacity:1, duration:1});} 
+            else {gsap.to(p.material,{opacity:0, duration:0.5, onComplete:()=>p.visible=false});}
+        });
+    }
+
+    function triggerFinale() {
+        if (isFinale || currentMode !== 'CAKE') return; isFinale = true;
+        // 瞬间缩放火苗，强化视觉反馈
+        gsap.to(flamePoints.scale,{x:0,y:0,z:0,duration:0.25, ease:"power2.in", onComplete:()=>flamePoints.visible=false});
+        setTimeout(()=>switchScene('CAROUSEL'), 500);
+        document.getElementById('finale-text').style.display='block';
+        createConfetti(); setInterval(launchFirework, 800);
+    }
+
+    // --- 5. 手势识别 ---
+    const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+    hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.6 });
+    hands.onResults((results) => {
+        if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0 || isFinale) return;
+        const lm = results.multiHandLandmarks[0];
+        const isFist = Math.hypot(lm[8].x - lm[0].x, lm[8].y - lm[0].y) < 0.22;
+        const isPeace = lm[8].y < lm[6].y && lm[12].y < lm[10].y && lm[16].y > lm[14].y;
+        const isCover = Math.abs(lm[17].x - lm[5].x) > 0.48;
+        if (isCover) triggerFinale(); else if (isFist) switchScene('CAROUSEL'); else if (isPeace) switchScene('CAKE');
+    });
+
+    function createConfetti() { 
+        const cs=[0xff69b4,0x00f2ff,0xffd700,0xff4500]; 
+        for(let i=0;i<150;i++){ 
+            const p=new THREE.Mesh(new THREE.PlaneGeometry(0.25,0.25),new THREE.MeshBasicMaterial({color:cs[i%4],side:2})); 
+            p.position.set((Math.random()-0.5)*40,25,(Math.random()-0.5)*20); 
+            p.userData={vy:Math.random()*0.12+0.05,vr:Math.random()*0.1}; 
+            scene.add(p); confettiParticles.push(p); 
+        } 
+    }
+    
+    function launchFirework() { 
+        const x=(Math.random()-0.5)*35, y=Math.random()*12+5, z=(Math.random()-0.5)*15, c=new THREE.Color().setHSL(Math.random(),0.8,0.6), pks=[]; 
+        for(let i=0;i<60;i++){ 
+            const p=new THREE.Mesh(new THREE.SphereGeometry(0.1,6,6),new THREE.MeshBasicMaterial({color:c,transparent:true})); 
+            p.position.set(x,y,z); const a=Math.random()*Math.PI*2, phi=Math.random()*Math.PI, s=Math.random()*0.25+0.1; 
+            p.userData={vx:Math.sin(phi)*Math.cos(a)*s, vy:Math.sin(phi)*Math.sin(a)*s, vz:Math.cos(phi)*s, life:1}; 
+            scene.add(p); pks.push(p); 
+        } 
+        fireworks.push(pks); 
+    }
+
+    function animate() {
+        requestAnimationFrame(animate);
+        const t = Date.now() * 0.001;
+        if(currentMode === 'CAKE') {
+            instMainBalls.rotation.y += 0.001; 
+            candleGroup.rotation.y += 0.001;
+            if (flamePoints && flamePoints.geometry) {
+                const fPosAttr = flamePoints.geometry.attributes.position;
+                for(let i=0; i<FLAME_COUNT; i++){
+                    const base = flameBasePos[i];
+                    fPosAttr.setXYZ(i, base.x + Math.sin(t*22+i)*0.012, base.y + (Math.sin(t*6+i*0.3)*0.5+0.5)*0.04, base.z + Math.cos(t*19+i)*0.012);
+                }
+                fPosAttr.needsUpdate = true;
+                flamePoints.scale.set(1+Math.sin(t*15)*0.03, 1.1+Math.cos(t*10)*0.1, 1+Math.sin(t*15)*0.03);
+            }
+        } else {
+            instMainBalls.rotation.y += 0.0006;
+            photos.forEach((p, i) => {
+                const total = photos.length;
+                let rad, speed, yBase, angleOffset;
+                if (window.innerWidth < 600) { rad = 8.5; speed = 0.35; yBase = 5.0 + Math.sin(t + i) * 0.5; angleOffset = (i / total) * Math.PI * 2; } 
+                else {
+                    const mid = Math.ceil(total / 2);
+                    if (i < mid) { rad = 6.5; speed = 0.35; yBase = 7.5; angleOffset = (i / mid) * Math.PI * 2; }
+                    else { rad = 12.5; speed = -0.25; yBase = 3.0; angleOffset = ((i-mid)/(total-mid)) * Math.PI * 2; }
+                }
+                const curA = angleOffset + t * speed;
+                p.position.set(Math.cos(curA)*rad, yBase + Math.sin(t+i)*0.4, Math.sin(curA)*rad);
+                p.lookAt(camera.position);
+            });
+        }
+        confettiParticles.forEach(p => { p.position.y -= p.userData.vy; p.rotation.x += p.userData.vr; if(p.position.y < -10) p.position.y = 25; });
+        for(let i=fireworks.length-1; i>=0; i--) { 
+            let dead=true; 
+            fireworks[i].forEach(p=>{p.position.x+=p.userData.vx;p.position.y+=p.userData.vy;p.position.z+=p.userData.vz;p.userData.vy-=0.004;p.userData.life-=0.01;p.material.opacity=p.userData.life;if(p.userData.life>0)dead=false;}); 
+            if(dead){fireworks[i].forEach(p=>scene.remove(p));fireworks.splice(i,1);} 
+        }
+        renderer.render(scene, camera);
+    }
+
+    document.getElementById('start-btn').onclick = () => {
+        gsap.to("#start-screen", { opacity:0, duration:1.2, onComplete:()=>{
+            document.getElementById('start-screen').remove(); 
+            initThree(); animate();
+            const v = document.getElementById('video-input');
+            new Camera(v, { onFrame: async()=>await hands.send({image:v}), width: 640, height: 480 }).start();
+        }});
+    };
+</script>
+</body>
+</html>
