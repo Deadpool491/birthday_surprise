@@ -18,7 +18,8 @@
         .bow-svg { position: absolute; top: -10px; left: 50%; transform: translateX(-50%); width: 120px; height: 70px; z-index: 5; }
         #start-btn { margin-top: 60px; padding: 18px 60px; font-size: 20px; font-weight: bold; color: #4a3c00; background: linear-gradient(45deg, #d4af37, #fde48e, #d4af37); border: none; cursor: pointer; border-radius: 4px; z-index: 1001; -webkit-tap-highlight-color: transparent; }
         @keyframes float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-20px); } }
-        #video-input { visibility: hidden; position: absolute; width: 1px; height: 1px; }
+        /* 隐藏视频流但保持 playsinline 兼容性 */
+        #video-input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
         #finale-text { position: fixed; top: 25%; width: 100%; text-align: center; color: #fff; font-size: clamp(40px, 8vw, 80px); font-weight: 200; letter-spacing: 15px; text-shadow: 0 0 20px #d4af37; display: none; z-index: 100; pointer-events: none; }
     </style>
 </head>
@@ -37,26 +38,25 @@
         <button id="start-btn">MAKE A WISH</button>
     </div>
     <div id="finale-text">HAPPY BIRTHDAY</div>
-    <video id="video-input" autoplay muted playsinline></video>
+    <video id="video-input" playsinline muted autoplay></video>
 
 <script>
     let scene, camera, renderer, instMainBalls, candleGroup, waveLine, flamePoints;
     let photos = [], confettiParticles = [], fireworks = [];
     let currentMode = 'CAKE', isFinale = false, lastActionTime = 0;
     
-    // 保持你原代码的 15000 密度和位置数组
     const MAIN_COUNT = 15000; 
     const FLAME_COUNT = 2500;
     const cakePosArr = [], starPosArr = [], flameBasePos = [];
 
-    // --- 金色雪花 ---
+    // --- 雪花逻辑 ---
     const snowCanvas = document.getElementById('snow-canvas');
     const sCtx = snowCanvas.getContext('2d');
     let snowArray = [];
     function resize() { snowCanvas.width = window.innerWidth; snowCanvas.height = window.innerHeight; }
     window.addEventListener('resize', resize); resize();
     class Snow { constructor(){this.reset();} reset(){this.x=Math.random()*snowCanvas.width; this.y=Math.random()*snowCanvas.height-snowCanvas.height; this.s=Math.random()*2+1; this.v=Math.random()*1+0.5; this.o=Math.random()*0.5+0.3;} update(){this.y+=this.v; if(this.y>snowCanvas.height)this.reset();} draw(){sCtx.fillStyle=`rgba(212,175,55,${this.o})`; sCtx.beginPath(); sCtx.arc(this.x,this.y,this.s,0,Math.PI*2); sCtx.fill();}}
-    for(let i=0; i<100; i++) snowArray.push(new Snow());
+    for(let i=0; i<80; i++) snowArray.push(new Snow());
     function drawSnow(){ sCtx.clearRect(0,0,snowCanvas.width,snowCanvas.height); snowArray.forEach(p=>{p.update();p.draw();}); requestAnimationFrame(drawSnow); }
     drawSnow();
 
@@ -69,13 +69,27 @@
         return new THREE.CanvasTexture(canvas);
     }
 
+    // --- MediaPipe 初始化 ---
+    const hands = new Hands({
+        locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4/${file}`
+    });
+    hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.6 });
+    hands.onResults((results) => {
+        if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0 || isFinale) return;
+        const lm = results.multiHandLandmarks[0];
+        const isFist = Math.hypot(lm[8].x - lm[0].x, lm[8].y - lm[0].y) < 0.22;
+        const isPeace = lm[8].y < lm[6].y && lm[12].y < lm[10].y && lm[16].y > lm[14].y;
+        const isCover = Math.abs(lm[17].x - lm[5].x) > 0.48;
+        if (isCover) triggerFinale(); else if (isFist) switchScene('CAROUSEL'); else if (isPeace) switchScene('CAKE');
+    });
+
     function initThree() {
         scene = new THREE.Scene();
         camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
-        camera.position.set(0, 8, window.innerWidth < 600 ? 20 : 14);
+        camera.position.set(0, 8, window.innerWidth < 600 ? 18 : 14);
         camera.lookAt(0, 3, 0);
 
-        renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
         renderer.setSize(window.innerWidth, window.innerHeight);
         renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
         document.body.appendChild(renderer.domElement);
@@ -111,43 +125,28 @@
 
         geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
         geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-        instMainBalls = new THREE.Points(geo, new THREE.PointsMaterial({ 
-            size: 0.22, map: createGlowTexture(), vertexColors: true, transparent: true, opacity: 0.65, blending: THREE.AdditiveBlending, depthWrite: false 
-        }));
+        instMainBalls = new THREE.Points(geo, new THREE.PointsMaterial({ size: 0.22, map: createGlowTexture(), vertexColors: true, transparent: true, opacity: 0.65, blending: THREE.AdditiveBlending, depthWrite: false }));
         scene.add(instMainBalls);
 
         candleGroup = new THREE.Group();
         const CANDLE_PARTICLES = 1500; 
         const cGeo = new THREE.BufferGeometry();
         const cPos = new Float32Array(CANDLE_PARTICLES * 3);
-        const cCol = new Float32Array(CANDLE_PARTICLES * 3);
         for(let i = 0; i < CANDLE_PARTICLES; i++) {
             const theta = Math.random() * Math.PI * 2;
             const r = (Math.random() > 0.2) ? 0.12 : Math.random() * 0.12;
             const y = Math.random() * 1.8 - 0.9;
             cPos[i*3] = Math.cos(theta) * r; cPos[i*3+1] = y; cPos[i*3+2] = Math.sin(theta) * r;
-            colorTool.setHex(0xffb7c5); cCol[i*3] = colorTool.r; cCol[i*3+1] = colorTool.g; cCol[i*3+2] = colorTool.b;
         }
         cGeo.setAttribute('position', new THREE.BufferAttribute(cPos, 3));
-        cGeo.setAttribute('color', new THREE.BufferAttribute(cCol, 3));
-        const candleParticles = new THREE.Points(cGeo, new THREE.PointsMaterial({ 
-            size: 0.08, map: createGlowTexture(), vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, opacity: 0.8 
-        }));
+        const candleParticles = new THREE.Points(cGeo, new THREE.PointsMaterial({ size: 0.08, map: createGlowTexture(), color: 0xffb7c5, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, opacity: 0.8 }));
         candleParticles.position.y = 5.0;
-
-        const helixPts = [];
-        for(let i=0; i<=60; i++){
-            const hr = i/60, ang = hr*Math.PI*6;
-            helixPts.push(new THREE.Vector3(Math.cos(ang)*0.13, hr*1.8-0.9, Math.sin(ang)*0.13));
-        }
-        waveLine = new THREE.Line(new THREE.BufferGeometry().setFromPoints(helixPts), new THREE.LineBasicMaterial({ color: 0x00ffff, transparent: true, opacity: 0.6 }));
-        candleGroup.add(candleParticles, waveLine);
+        candleGroup.add(candleParticles);
         scene.add(candleGroup);
 
         const fGeo = new THREE.BufferGeometry();
         const fPos = new Float32Array(FLAME_COUNT * 3);
         const fCol = new Float32Array(FLAME_COUNT * 3);
-        flameBasePos.length = 0; 
         for(let i=0; i<FLAME_COUNT; i++) {
             const h = Math.random(); const angle = Math.random() * Math.PI * 2;
             const maxR = Math.sin(Math.pow(h, 0.45) * Math.PI) * 0.35; 
@@ -162,9 +161,7 @@
         }
         fGeo.setAttribute('position', new THREE.BufferAttribute(fPos, 3));
         fGeo.setAttribute('color', new THREE.BufferAttribute(fCol, 3));
-        flamePoints = new THREE.Points(fGeo, new THREE.PointsMaterial({ 
-            size: 0.15, map: createGlowTexture(), vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false 
-        }));
+        flamePoints = new THREE.Points(fGeo, new THREE.PointsMaterial({ size: 0.15, map: createGlowTexture(), vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }));
         flamePoints.position.y = 5.8;
         scene.add(flamePoints);
 
@@ -177,20 +174,6 @@
         }
         scene.add(new THREE.AmbientLight(0xffffff, 0.8));
     }
-
-    // --- 识别补丁 ---
-    const hands = new Hands({
-        locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4/${file}`
-    });
-    hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.6 });
-    hands.onResults((results) => {
-        if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0 || isFinale) return;
-        const lm = results.multiHandLandmarks[0];
-        const isFist = Math.hypot(lm[8].x - lm[0].x, lm[8].y - lm[0].y) < 0.22;
-        const isPeace = lm[8].y < lm[6].y && lm[12].y < lm[10].y && lm[16].y > lm[14].y;
-        const isCover = Math.abs(lm[17].x - lm[5].x) > 0.48;
-        if (isCover) triggerFinale(); else if (isFist) switchScene('CAROUSEL'); else if (isPeace) switchScene('CAKE');
-    });
 
     function switchScene(mode) {
         if (isFinale || currentMode === mode || Date.now() - lastActionTime < 1000) return;
@@ -210,7 +193,7 @@
 
     function triggerFinale() {
         if (isFinale || currentMode !== 'CAKE') return; isFinale = true;
-        gsap.to(flamePoints.scale,{x:0,y:0,z:0,duration:0.25, ease:"power2.in", onComplete:()=>flamePoints.visible=false});
+        gsap.to(flamePoints.scale,{x:0,y:0,z:0,duration:0.25, onComplete:()=>flamePoints.visible=false});
         setTimeout(()=>switchScene('CAROUSEL'), 500);
         document.getElementById('finale-text').style.display='block';
         setInterval(launchFirework, 800);
@@ -245,9 +228,8 @@
             instMainBalls.rotation.y += 0.0006;
             photos.forEach((p, i) => {
                 const total = photos.length;
-                let rad = (window.innerWidth < 600) ? 8.5 : 10.5;
                 const angle = (i/total)*Math.PI*2 + t*0.3;
-                p.position.set(Math.cos(angle)*rad, 5.0 + Math.sin(t+i)*0.4, Math.sin(angle)*rad);
+                p.position.set(Math.cos(angle)*9.5, 5.0 + Math.sin(t+i)*0.4, Math.sin(angle)*9.5);
                 p.lookAt(camera.position);
             });
         }
@@ -259,25 +241,41 @@
         renderer.render(scene, camera);
     }
 
-    // --- 修正后的按钮点击逻辑 ---
-    document.getElementById('start-btn').onclick = () => {
+    // --- 最终兼容性启动逻辑 ---
+    document.getElementById('start-btn').onclick = async () => {
         const v = document.getElementById('video-input');
         
-        // 尝试激活手机播放
-        v.play().catch(e => console.log("等待相机启动..."));
+        // 1. 强制请求并启动视频流（适配电脑和手机权限）
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+            v.srcObject = stream;
+            await v.play();
+        } catch (err) {
+            alert("请允许访问摄像头以启用手势互动！");
+            console.error(err);
+        }
 
-        // 执行隐藏第一幕的动画
-        gsap.to("#start-screen", { opacity:0, duration:1.2, onComplete:()=>{
-            document.getElementById('start-screen').style.display = 'none';
-            initThree(); animate();
-            
-            // 启动 MediaPipe Camera
-            const cameraHelper = new Camera(v, { 
-                onFrame: async() => { await hands.send({image:v}); }, 
-                width: 480, height: 480 
-            });
-            cameraHelper.start();
-        }});
+        // 2. 视频流启动后，执行 UI 淡出
+        gsap.to("#start-screen", { 
+            opacity: 0, 
+            duration: 1.2, 
+            onComplete: () => {
+                document.getElementById('start-screen').style.display = 'none';
+                
+                // 3. 初始化 3D 效果
+                initThree(); 
+                animate();
+
+                // 4. 让 MediaPipe 开始“抓取”已经运行的视频流
+                const cameraHelper = new Camera(v, {
+                    onFrame: async () => {
+                        await hands.send({image: v});
+                    },
+                    width: 480, height: 480
+                });
+                cameraHelper.start();
+            }
+        });
     };
 </script>
 </body>
