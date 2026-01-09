@@ -9,7 +9,7 @@
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
     <style>
-        body { margin: 0; background: radial-gradient(circle at center, #0a192f 0%, #001122 70%, #000 100%); overflow: hidden; font-family: 'PingFang SC', sans-serif; touch-action: none; }
+        body { margin: 0; background: radial-gradient(circle at center, #1a1a35 0%, #080a1a 70%, #000 100%); overflow: hidden; font-family: 'PingFang SC', sans-serif; touch-action: none; }
         #start-screen { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: radial-gradient(circle at center, #0d254c 0%, #000 100%); z-index: 1000; display: flex; flex-direction: column; align-items: center; justify-content: center; }
         .gift-container { width: 180px; height: 180px; position: relative; animation: float 4s ease-in-out infinite; }
         .box-body { width: 140px; height: 120px; position: absolute; bottom: 0; left: 20px; background: linear-gradient(135deg, #1e3799 0%, #0c2461 100%); border-radius: 8px; z-index: 2; }
@@ -106,6 +106,35 @@
         const colors = new Float32Array(MAIN_COUNT * 3);
         const colorTool = new THREE.Color();
         let idx = 0;
+        const backParticlesCount = 500; 
+        const backGeo = new THREE.BufferGeometry();
+        const backPos = new Float32Array(backParticlesCount * 3);
+        window.backSpeeds = []; 
+
+        for (let i = 0; i < backParticlesCount; i++) {
+            // 粒子分布在背景区域
+            backPos[i * 3] = (Math.random() - 0.5) * 100; 
+            backPos[i * 3 + 1] = Math.random() * 50 - 10; 
+            backPos[i * 3 + 2] = (Math.random() - 0.5) * 50 - 25; // 稍微放远一点
+            
+            window.backSpeeds.push({
+                y: Math.random() * 0.02 + 0.01,
+                sin: Math.random() * 0.02,
+                offset: Math.random() * 100
+            });
+        }
+        backGeo.setAttribute('position', new THREE.BufferAttribute(backPos, 3));
+        const backMat = new THREE.PointsMaterial({
+            size: 0.8,
+            color: 0xffdae0, // 浅粉色
+            transparent: true,
+            opacity: 0.6,
+            map: createGlowTexture(), 
+            blending: THREE.AdditiveBlending,
+            depthWrite: false
+        });
+        window.backgroundPoints = new THREE.Points(backGeo, backMat);
+        scene.add(window.backgroundPoints);
 
         tiers.forEach(t => {
             const yMin = t.yCenter - t.h/2;
@@ -214,6 +243,23 @@
     function animate() {
         requestAnimationFrame(animate);
         const t = Date.now() * 0.001;
+	if (window.backgroundPoints) {
+        const positions = window.backgroundPoints.geometry.attributes.position.array;
+        for (let i = 0; i < window.backSpeeds.length; i++) {
+            const s = window.backSpeeds[i];
+            // 向上漂移
+            positions[i * 3 + 1] += s.y; 
+            // 左右晃动 (利用正弦函数 Math.sin 模拟自然摆动)
+            positions[i * 3] += Math.sin(t + s.offset) * s.sin; 
+            
+            // 如果粒子飘得太高，重置回底部，形成循环
+            if (positions[i * 3 + 1] > 30) {
+                positions[i * 3 + 1] = -10;
+            }
+        }
+        // 必须告诉 Three.js 坐标已经更新，否则画面不会变
+        window.backgroundPoints.geometry.attributes.position.needsUpdate = true;
+    }
         if(currentMode === 'CAKE') {
             instMainBalls.rotation.y += 0.001; candleGroup.rotation.y += 0.001;
             if (flamePoints && flamePoints.geometry) {
