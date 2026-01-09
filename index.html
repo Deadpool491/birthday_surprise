@@ -38,6 +38,7 @@
         <button id="start-btn">MAKE A WISH</button>
     </div>
     <div id="finale-text">HAPPY BIRTHDAY</div>
+    <audio id="bgm" src="bgm.mp3" loop></audio>
     <video id="video-input" playsinline muted autoplay></video>
 
 <script>
@@ -244,13 +245,16 @@
     // --- 最终兼容性启动逻辑 ---
     document.getElementById('start-btn').onclick = async () => {
         const v = document.getElementById('video-input');
+	const audio = document.getElementById('bgm'); // 获取音频元素
         
         // 1. 强制请求并启动视频流（适配电脑和手机权限）
         try {
+	    audio.play().catch(e => console.log("音频播放失败:", e));
             const stream = await navigator.mediaDevices.getUserMedia({ video: true });
             v.srcObject = stream;
             await v.play();
         } catch (err) {
+	    audio.play().catch(() => {});
             alert("请允许访问摄像头以启用手势互动！");
             console.error(err);
         }
